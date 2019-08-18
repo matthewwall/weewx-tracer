@@ -9,6 +9,9 @@ tested with model 3210A
 
 default serial settings: 115200-8-1-N
 
+use sudo when running, otherwise you will get this exception:
+  engine: Unable to load driver: 'NoneType' object has no attribute 'interCharTimeout'
+
 pip install pymodbus
 
 Credits
@@ -30,7 +33,7 @@ import time
 
 import weewx
 import weewx.drivers
-
+import weewx.units
 
 DRIVER_NAME = 'Tracer'
 DRIVER_VERSION = '0.2'
@@ -57,6 +60,30 @@ def loader(config_dict, _):
 
 def confeditor_loader():
     return TracerConfEditor()
+
+
+schema = [('dateTime',   'INTEGER NOT NULL UNIQUE PRIMARY KEY'),
+          ('usUnits',    'INTEGER NOT NULL'),
+          ('interval',   'INTEGER NOT NULL'),
+          ('ambient_temperature',  'REAL'), # degree_C
+          ('battery_temperature', 'REAL'), # degree_C
+          ('battery_current', 'REAL'), # amp
+          ('battery_voltage', 'REAL'), # volt
+          ('consumed_energy', 'REAL'),  # watt-hour
+          ('generated_energy', 'REAL'), # watt-hour
+]
+
+weewx.units.obs_group_dict['ambient_temperature'] = 'group_temperature'
+weewx.units.obs_group_dict['battery_temperature'] = 'group_temperature'
+weewx.units.obs_group_dict['battery_current'] = 'group_amp'
+weewx.units.obs_group_dict['battery_current'] = 'group_volt'
+weewx.units.obs_group_dict['consumed_energy'] = 'group_energy' # watt-hour
+weewx.units.obs_group_dict['generated_energy'] = 'group_energy' # watt-hour
+try:
+        # weewx prior to 3.7.0.  for 3.7.0+ this goes in the weewx config file
+        weewx.accum.extract_dict['grid_energy'] = weewx.accum.Accum.sum_extract
+except AttributeError:
+        pass
 
 
 BATTERY_TYPES = {
@@ -226,7 +253,6 @@ class TracerDriver(weewx.drivers.AbstractDevice):
         while True:
             data = dict()
             data.update(self._get_with_retries('get_data'))
-            data.update(self._get_with_retries('get_statistics'))
             logdbg("raw data: %s" % data)
             pkt = {
                 'dateTime': int(time.time() + 0.5),
@@ -425,6 +451,24 @@ class Tracer(ModbusSerialClient):
             })
         return data
 
+    def get_coils(self):
+        mapping = [
+            (2, 1, ['manual_load_control', 0]),
+            (3, 1, ['default_load_control', 0]),
+            (5, 1, ['load_test_mode', 0]),
+            (6, 1, ['force_loa', 0]),
+        ]
+        data = dict()
+        for m in mapping:
+            r = self.read_coils(m[0], m[1], unit=self.unit)
+            if isinstance(r, Exception):
+                data.update({'coil%s' % m[0]: "exception: %s" % r})
+            elif r.function_code >= 0x80:
+                data.update({'coil%s' % m[0]: 'read failed'})
+            else:
+                data.update({m[2][0]: r.bits[m[2][1]]})
+        return data
+
     def get_settings(self):
         data = dict()
 
@@ -607,6 +651,9 @@ if __name__ == '__main__':
             pretty_print(data, 2)
             print("data:")
             data = station.get_data()
+            pretty_print(data, 2)
+            print("coils:")
+            data = station.get_coils()
             pretty_print(data, 2)
             print("statistics:")
             data = station.get_statistics()
