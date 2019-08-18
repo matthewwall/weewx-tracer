@@ -27,6 +27,14 @@ sudo /etc/init.d/weewx start
 
 
 ===============================================================================
+Verify
+
+To verify that the driver works, invoke it directly:
+
+sudo PYTHONPATH=/home/weewx/bin python /home/weewx/bin/user/tracer.py --help
+
+
+===============================================================================
 Driver options
 
 These are the options available for the driver, with their default values:
