@@ -17,6 +17,8 @@ Thanks to lewismoten for publishing a pymodbus implementation:
   https://github.com/lewismoten/solar-log/tree/master/charge-controller
 """
 
+# TODO: enable get/set time
+
 from pymodbus.client.sync import ModbusSerialClient
 from pymodbus.mei_message import ReadDeviceInformationRequest
 from pymodbus.constants import DeviceInformation
@@ -91,14 +93,22 @@ ON_OFF = {
     1: "on",
 }
 
-def value32(low, high):
-    return ctypes.c_int(low + (high << 16)).value / 100
+def value32(lo, hi):
+    return ctypes.c_int(lo + (hi << 16)).value / 100
 def value16(value):
     return ctypes.c_short(value).value / 100
 def value8(value):
     return [value >> 8, value & 0xFF]
 def volts(x):
     return value16(x)
+def watts(lo, hi):
+    return value32(lo, hi)
+def kwh(lo, hi):
+    return value32(lo, hi)
+def amps(lo, hi=None):
+    if hi is not None:
+        return value32(lo, hi)
+    return value16(lo)
 def amp_hours(x):
     return x
 def milliohms(x):
@@ -107,6 +117,8 @@ def temperature(x):
     return value16(x) # degree C
 def percent(x):
     return value16(x) * 100
+def tons(lo, hi):
+    return value32(lo, hi)
 def coeff(x):
     return value16(x)
 def battery_type(x):
@@ -171,7 +183,14 @@ class TracerConfEditor(weewx.drivers.AbstractConfEditor):
 class TracerDriver(weewx.drivers.AbstractDevice):
     # mapping from hardware names to database schema names
     DEFAULT_MAP = {
-        'pressure': 'pressure',
+        'outTemp': 'ambient_temperature',
+        'battery_temperature': 'battery_temperature',
+        'battery_current': 'battery_current',
+        'battery_voltage': 'battery_voltage',
+        'consumed_energy': 'consumed_energey_total',
+        'consumed_energy_today': 'consumed_energy_today',
+        'generated_energy': 'generated_energy_total',
+        'generated_energy_today': 'generated_energy_today',
     }
 
     def __init__(self, **stn_dict):
@@ -200,16 +219,19 @@ class TracerDriver(weewx.drivers.AbstractDevice):
         return self.model
 
     def closePort(self):
-        self.station.disconnect()
+        self.station.close()
         self.station = None
 
     def genLoopPackets(self):
         while True:
-            data = self._get_with_retries('get_current')
+            data = dict()
+            data.update(self._get_with_retries('get_data'))
+            data.update(self._get_with_retries('get_statistics'))
             logdbg("raw data: %s" % data)
-            pkt = dict()
-            pkt['dateTime'] = int(time.time() + 0.5)
-            pkt['usUnits'] = weewx.US
+            pkt = {
+                'dateTime': int(time.time() + 0.5),
+                'usUnits': weewx.METRIC,
+            }
             for k in self.sensor_map:
                 if self.sensor_map[k] in data:
                     pkt[k] = data[self.sensor_map[k]]
@@ -259,6 +281,106 @@ class Tracer(ModbusSerialClient):
             'version': basic.information[2],
             'serial': regular.information[3],
         }
+
+    def get_ratings(self):
+        data = dict()
+        r = self.read_input_registers(0x3000, 9, unit=self.unit)
+        if isinstance(r, Exception):
+            data.update({'0x3000': "exception: %s" % r})
+        elif r.function_code >= 0x80:
+            data.update({'0x3000': 'read failed'})
+        else:
+            data.update({
+                'rated_input_voltage': volts(r.registers[0]),
+                'rated_input_current': amps(r.registers[1]),
+                'rated_input_power': watts(r.registers[2], r.registers[3]),
+                'rated_output_voltage': volts(r.registers[4]),
+                'rated_output_current': amps(r.registers[5]),
+                'rated_output_power': watts(r.registers[6], r.registers[7]),
+                'charging_mode': r.registers[8],
+            })
+        r = self.read_input_registers(0x300E, 1, unit=self.unit)
+        if isinstance(r, Exception):
+            data.update({'0x300E': "exception: %s" % r})
+        elif r.function_code >= 0x80:
+            data.update({'0x300E': 'read failed'})
+        else:
+            data.update({
+                'rated_output_current_of_load': amps(r.registers[0]),
+            })
+        return data
+
+    def get_statistics(self):
+        data = dict()
+        r = self.read_input_registers(0x3300, 31, unit=self.unit)
+        if isinstance(r, Exception):
+            data.update({'0x3300': "exception: %s" % r})
+        elif r.function_code >= 0x80:
+            data.update({'0x3300': 'read failed'})
+        else:
+            data.update({
+                'input_voltage_today_max': volts(r.registers[0]),
+                'input_voltage_today_min': volts(r.registers[1]),
+                'battery_voltage_today_max': volts(r.registers[2]),
+                'battery_voltage_today_min': volts(r.registers[3]),
+                'consumed_energy_today': kwh(r.registers[4], r.registers[5]),
+                'consumed_energy_month': kwh(r.registers[6], r.registers[7]),
+                'consumed_energy_year': kwh(r.registers[8], r.registers[9]),
+                'consumed_energy_total': kwh(r.registers[10], r.registers[11]),
+                'generated_energy_today': kwh(r.registers[12], r.registers[13]),
+                'generated_energy_month': kwh(r.registers[14], r.registers[15]),
+                'generated_energy_year': kwh(r.registers[16], r.registers[17]),
+                'generated_energy_total': kwh(r.registers[18], r.registers[19]),
+                'co2_reduction': tons(r.registers[20], r.registers[21]),
+                'battery_voltage': volts(r.registers[26]),
+                'battery_current': amps(r.registers[27], r.registers[28]),
+                'battery_temperature': temperature(r.registers[29]),
+                'ambient_temperature': temperature(r.registers[30]),
+            })
+        return data
+
+    def get_data(self):
+        data = dict()
+        r = self.read_input_registers(0x3100, 19, unit=self.unit)
+        if isinstance(r, Exception):
+            data.update({'0x3100': "exception: %s" % r})
+        elif r.function_code >= 0x80:
+            data.update({'0x3100': 'read failed'})
+        else:
+            data.update({
+                'charge_input_voltage': volts(r.registers[0]),
+                'charge_input_current': amps(r.registers[1]),
+                'charge_input_power': watts(r.registers[2], r.registers[3]),
+                'charge_output_voltage': volts(r.registers[4]),
+                'charge_output_current': amps(r.registers[5]),
+                'charge_output_power': watts(r.registers[6], r.registers[7]),
+                'discharge_output_voltage': volts(r.registers[12]),
+                'discharge_output_current': amps(r.registers[13]),
+                'discharge_output_power': watts(r.registers[14], r.registers[15]),
+                'battery_temperature': temperature(r.registers[16]),
+                'equipment_temperature': temperature(r.registers[17]),
+                'component_temperature': temperature(r.registers[18]),
+            })
+        r = self.read_input_registers(0x311A, 2, unit=self.unit)
+        if isinstance(r, Exception):
+            data.update({'0x311A': "exception: %s" % r})
+        elif r.function_code >= 0x80:
+            data.update({'0x311A': 'read failed'})
+        else:
+            data.update({
+                'battery_soc': percent(r.registers[0]),
+                'remote_battery_temperature': temperature(r.registers[1]),
+            })
+        r = self.read_input_registers(0x311D, 1, unit=self.unit)
+        if isinstance(r, Exception):
+            data.update({'0x311D': "exception: %s" % r})
+        elif r.function_code >= 0x80:
+            data.update({'0x311D': 'read failed'})
+        else:
+            data.update({
+                'battery_rated_power': volts(r.registers[0]),
+            })
+        return data
 
     def get_status(self):
         data = dict()
@@ -474,11 +596,20 @@ if __name__ == '__main__':
             print("device info:")
             data = station.get_info()
             pretty_print(data, 2)
+            print("device ratings:")
+            data = station.get_ratings()
+            pretty_print(data, 2)
             print("device settings:")
             data = station.get_settings()
             pretty_print(data, 2)
             print("status:")
             data = station.get_status()
+            pretty_print(data, 2)
+            print("data:")
+            data = station.get_data()
+            pretty_print(data, 2)
+            print("statistics:")
+            data = station.get_statistics()
             pretty_print(data, 2)
 
     main()
