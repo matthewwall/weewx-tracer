@@ -260,6 +260,49 @@ class Tracer(ModbusSerialClient):
             'serial': regular.information[3],
         }
 
+    def get_status(self):
+        data = dict()
+        r = self.read_input_registers(0x3200, 3, unit=self.unit)
+        if isinstance(r, Exception):
+            data.update({'0x3200': "exception: %s" % r})
+        elif r.function_code >= 0x80:
+            data.update({'0x3200': 'read failed'})
+        else:
+            r0 = r.registers[0]
+            r1 = r.registers[1]
+            r2 = r.registers[2]
+            data.update({
+                'status_battery_voltage': r0 & 0x0007,
+                'status_battery_temperature': (r0 >> 4) & 0x000f,
+                'status_battery_resistance': (r0 >> 8) & 0x0001,
+                'status_battery_rated_voltage': (r0 >> 15) & 0x0001,
+                'status_charge_input_voltage': (r1 >> 14) & 0x0003,
+                'status_charge_mosfet_short': (r1 >> 13) & 0x0001,
+                'status_charge_charging_or_anti_reverse_mosfet_short': (r1 >> 12) & 0x0001,
+                'status_charge_anti_reverse_mosfet_short': (r1 >> 11) & 0x0001,
+                'status_charge_input_over_current': (r1 >> 10) & 0x0001,
+                'status_charge_load_over_current': (r1 >> 9) & 0x0001,
+                'status_charge_load_short': (r1 >> 8) & 0x0001,
+                'status_charge_load_mosfet_short': (r1 >> 7) & 0x0001,
+                'status_charge_pv_input_short': (r1 >> 4) & 0x0001,
+                'status_charge_battery': (r1 >> 2) & 0x0003,
+                'status_charge_fault': (r1 >> 1) & 0x0001,
+                'status_charge_running': r1 & 0x0001,
+                'status_discharge_input_voltage': (r2 >> 14) & 0x003,
+                'status_discharge_output_power': (r2 >> 12) & 0x0003,
+                'status_discharge_short_circuit': (r2 >> 11) & 0x0001,
+                'status_discharge_unable_to_discharge': (r2 >> 10) & 0x0001,
+                'status_discharge_unable_to_stop_discharge': (r2 >> 9) & 0x0001,
+                'status_discharge_output_voltage_abnormal': (r2 >> 8) & 0x0001,
+                'status_discharge_input_overpressure': (r2 >> 7) & 0x0001,
+                'status_discharge_high_voltage_side_short': (r2 >> 6) & 0x0001,
+                'status_discharge_boost_overpressure': (r2 >> 5) & 0x0001,
+                'status_discharge_output_overpressure': (r2 >> 4) & 0x0001,
+                'status_discharge_fault': (r2 >> 1) & 0x0001,
+                'status_discharge_running': r2 & 0x001,
+            })
+        return data
+
     def get_settings(self):
         data = dict()
 
@@ -433,6 +476,9 @@ if __name__ == '__main__':
             pretty_print(data, 2)
             print("device settings:")
             data = station.get_settings()
+            pretty_print(data, 2)
+            print("status:")
+            data = station.get_status()
             pretty_print(data, 2)
 
     main()
