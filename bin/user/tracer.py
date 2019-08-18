@@ -210,7 +210,7 @@ class TracerConfEditor(weewx.drivers.AbstractConfEditor):
 class TracerDriver(weewx.drivers.AbstractDevice):
     # mapping from hardware names to database schema names
     DEFAULT_MAP = {
-        'outTemp': 'ambient_temperature',
+        'ambient_temperature': 'ambient_temperature',
         'battery_temperature': 'battery_temperature',
         'battery_current': 'battery_current',
         'battery_voltage': 'battery_voltage',
@@ -253,6 +253,7 @@ class TracerDriver(weewx.drivers.AbstractDevice):
         while True:
             data = dict()
             data.update(self._get_with_retries('get_data'))
+            data.update(self._get_with_retries('get_statistics'))
             logdbg("raw data: %s" % data)
             pkt = {
                 'dateTime': int(time.time() + 0.5),
