@@ -1,0 +1,38 @@
+weewx-tracer - weewx driver for tracer solar charge controller
+Copyright 2019 Matthew Wall
+Distributed under terms of the GPLv3
+
+===============================================================================
+Installation
+
+0) install weewx, select 'Simulator' driver
+
+http://weewx.com/docs/usersguide.htm#installing
+
+1) download the driver
+
+wget -O weewx-tracer.zip https://github.com/matthewwall/weewx-tracer/archive/master.zip
+
+2) install the driver
+
+sudo wee_extension --install weewx-tracer.tgz
+
+3) configure the driver
+
+sudo wee_config --reconfigure --driver=user.tracer --no-prompt
+
+4) start weewx
+
+sudo /etc/init.d/weewx start
+
+
+===============================================================================
+Driver options
+
+These are the options available for the driver, with their default values:
+
+[Tracer]
+    port = /dev/ttyUSB0
+    poll_interval = 10
+    driver = user.tracer
+
